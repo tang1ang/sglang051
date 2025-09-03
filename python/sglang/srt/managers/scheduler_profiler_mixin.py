@@ -64,7 +64,7 @@ class SchedulerProfilerMixin:
         if output_dir is None:
             output_dir = os.getenv("SGLANG_TORCH_PROFILER_DIR", "/tmp")
         if activities is None:
-            activities = ["CPU", "GPU"]
+            activities = ["CPU", "GPU", "CUDA_PROFILER"]
 
         self.torch_profiler_output_dir = output_dir
         self.torch_profiler_with_stack = with_stack

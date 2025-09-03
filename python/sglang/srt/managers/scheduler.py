@@ -33,6 +33,9 @@ import torch
 import zmq
 from torch.distributed import barrier
 
+import torch.cuda.nvtx as nvtx
+
+
 from sglang.global_config import global_config
 from sglang.srt.configs.model_config import ModelConfig
 from sglang.srt.constrained.base_grammar_backend import (
@@ -848,6 +851,9 @@ class Scheduler(
         while True:
             server_is_idle = True
             for mb_id in range(micro_pp_size):
+                nvtx.range_push(f"mb_id {mb_id}")
+
+                nvtx.range_push(f"request process")
                 self.running_batch = self.running_mbs[mb_id]
                 self.last_batch = last_mbs[mb_id]
 
@@ -856,14 +862,24 @@ class Scheduler(
                 mbs[mb_id] = self.get_next_batch_to_run()
                 self.running_mbs[mb_id] = self.running_batch
 
+                nvtx.range_pop() # request process
+
                 self.cur_batch = mbs[mb_id]
                 if self.cur_batch:
+                    if self.cur_batch.forward_mode.is_extend():
+                        nvtx.range_push(f"prefill run_batch")
+                    else:
+                        nvtx.range_push(f"decode run_batch")
+
                     server_is_idle = False
                     result = self.run_batch(self.cur_batch)
+
+                    nvtx.range_pop() # decode run_batch
 
                 # (last rank) send the outputs to the next step
                 if self.pp_group.is_last_rank:
                     if self.cur_batch:
+                        nvtx.range_push(f"send step output")
                         next_token_ids, bids[mb_id] = (
                             result.next_token_ids,
                             result.bid,
@@ -895,11 +911,13 @@ class Scheduler(
                             pp_outputs.tensors,
                             all_gather_group=self.attn_tp_group,
                         )
+                        nvtx.range_pop() # send step output
 
                 # receive outputs and post-process (filter finished reqs) the coming microbatch
                 next_mb_id = (mb_id + 1) % micro_pp_size
                 next_pp_outputs = None
                 if mbs[next_mb_id] is not None:
+                    nvtx.range_push(f"recv step output")
                     next_pp_outputs: Optional[PPProxyTensors] = PPProxyTensors(
                         self.pp_group.recv_tensor_dict(
                             all_gather_group=self.attn_tp_group
@@ -930,9 +948,11 @@ class Scheduler(
                     )
                     self.process_batch_result(mbs[next_mb_id], output_result)
                     last_mbs[next_mb_id] = mbs[next_mb_id]
+                    nvtx.range_pop() # recv step output
 
                 # (not last rank)
                 if not self.pp_group.is_last_rank:
+                    nvtx.range_push(f"forward step output")
                     if self.cur_batch:
                         bids[mb_id] = result.bid
                     # carry the outputs to the next stage
@@ -942,7 +962,9 @@ class Scheduler(
                             pp_outputs.tensors,
                             all_gather_group=self.attn_tp_group,
                         )
+                    nvtx.range_pop() # forward step output
 
+                    nvtx.range_push(f"send req")
                     # send out reqs to the next stage
                     dp_offset = self.attn_dp_rank * self.attn_tp_size
                     if self.attn_tp_rank == 0:
@@ -954,14 +976,21 @@ class Scheduler(
                             (self.pp_rank + 1) * self.tp_size + dp_offset,
                         )
 
+                    nvtx.range_pop() # send req
+
                     # send out proxy tensors to the next stage
                     if self.cur_batch:
+
+                        nvtx.range_push(f"send pp output tensor")
                         self.pp_group.send_tensor_dict(
                             result.pp_hidden_states_proxy_tensors,
                             all_gather_group=self.attn_tp_group,
                         )
+                        nvtx.range_pop() # send pp output tensor
 
                 pp_outputs = next_pp_outputs
+
+                nvtx.range_pop() # mb_id
 
             # When the server is idle, self-check and re-init some states
             if server_is_idle:
