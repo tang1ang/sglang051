@@ -840,7 +840,7 @@ class Scheduler(
     @DynamicGradMode()
     def event_loop_pp(self):
         """A non-overlap scheduler loop for pipeline parallelism."""
-        micro_pp_size = self.pp_size + 4
+        micro_pp_size = self.pp_size
         mbs = [None] * micro_pp_size
         last_mbs = [None] * micro_pp_size
         self.running_mbs = [
