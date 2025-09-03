@@ -837,16 +837,17 @@ class Scheduler(
     @DynamicGradMode()
     def event_loop_pp(self):
         """A non-overlap scheduler loop for pipeline parallelism."""
-        mbs = [None] * self.pp_size
-        last_mbs = [None] * self.pp_size
+        micro_pp_size = self.pp_size + 4
+        mbs = [None] * micro_pp_size
+        last_mbs = [None] * micro_pp_size
         self.running_mbs = [
-            ScheduleBatch(reqs=[], batch_is_full=False) for _ in range(self.pp_size)
+            ScheduleBatch(reqs=[], batch_is_full=False) for _ in range(micro_pp_size)
         ]
-        bids = [None] * self.pp_size
+        bids = [None] * micro_pp_size
         pp_outputs: Optional[PPProxyTensors] = None
         while True:
             server_is_idle = True
-            for mb_id in range(self.pp_size):
+            for mb_id in range(micro_pp_size):
                 self.running_batch = self.running_mbs[mb_id]
                 self.last_batch = last_mbs[mb_id]
 
@@ -896,7 +897,7 @@ class Scheduler(
                         )
 
                 # receive outputs and post-process (filter finished reqs) the coming microbatch
-                next_mb_id = (mb_id + 1) % self.pp_size
+                next_mb_id = (mb_id + 1) % micro_pp_size
                 next_pp_outputs = None
                 if mbs[next_mb_id] is not None:
                     next_pp_outputs: Optional[PPProxyTensors] = PPProxyTensors(
