@@ -196,6 +196,7 @@ class SchedulerOutputProcessorMixin:
         batch: ScheduleBatch,
         result: GenerationBatchResult,
         launch_done: Optional[threading.Event] = None,
+        micro_batch_id: int = 0,
     ):
         logits_output, next_token_ids, can_run_cuda_graph = (
             result.logits_output,
@@ -293,7 +294,7 @@ class SchedulerOutputProcessorMixin:
             self.current_scheduler_metrics_enabled()
             and self.forward_ct_decode % self.server_args.decode_log_interval == 0
         ):
-            self.log_decode_stats(can_run_cuda_graph, running_batch=batch)
+            self.log_decode_stats(can_run_cuda_graph, running_batch=batch, micro_batch_id=micro_batch_id)
 
     def add_input_logprob_return_values(
         self: Scheduler,

@@ -61,6 +61,7 @@ class SchedulerMetricsMixin:
         adder: PrefillAdder,
         can_run_list: List[Req],
         running_bs: int,
+        micro_batch_id: int = 0,
     ):
         gap_latency = time.perf_counter() - self.last_prefill_stats_tic
         self.last_prefill_stats_tic = time.perf_counter()
@@ -91,6 +92,7 @@ class SchedulerMetricsMixin:
         num_new_seq = len(can_run_list)
         f = (
             f"Prefill batch. "
+            f"#micro_batch_id: {micro_batch_id}, "
             f"#new-seq: {num_new_seq}, "
             f"#new-token: {adder.log_input_tokens}, "
             f"#cached-token: {adder.log_hit_tokens}, "
@@ -130,7 +132,7 @@ class SchedulerMetricsMixin:
         self._publish_kv_events()
 
     def log_decode_stats(
-        self, can_run_cuda_graph: bool, running_batch: ScheduleBatch = None
+        self, can_run_cuda_graph: bool, running_batch: ScheduleBatch = None, micro_batch_id: int = 0
     ):
         batch = running_batch or self.running_batch
 
@@ -167,7 +169,7 @@ class SchedulerMetricsMixin:
                 gap_latency / self.server_args.decode_log_interval
             )
 
-        msg = f"Decode batch. #running-req: {num_running_reqs}, {token_msg}"
+        msg = f"Decode batch. #micro_batch_id: {micro_batch_id}, #running-req: {num_running_reqs}, {token_msg}"
 
         if self.spec_algorithm.is_none():
             spec_accept_length = 0

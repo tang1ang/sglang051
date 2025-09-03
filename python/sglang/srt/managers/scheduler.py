@@ -250,6 +250,10 @@ class Scheduler(
             )
         )
 
+        # for micro batch
+        self.micro_step_size = self.pp_size + 4
+        self.micro_batch_id = 0
+
         # Init model config
         self.model_config = ModelConfig.from_server_args(server_args)
 
@@ -365,9 +369,14 @@ class Scheduler(
             _,
         ) = self.tp_worker.get_worker_info()
         if global_server_args_dict["max_micro_batch_size"] is None:
-            global_server_args_dict["max_micro_batch_size"] = max(
-                self.max_running_requests // server_args.pp_size, 1
-            )
+            if server_args.pp_size > 1:
+                global_server_args_dict["max_micro_batch_size"] = max(
+                    self.max_running_requests // self.micro_step_size, 1
+                )
+            else:
+                global_server_args_dict["max_micro_batch_size"] = max(
+                    self.max_running_requests // server_args.pp_size, 1
+                )
 
         self.tp_group = self.tp_worker.get_tp_group()
         self.tp_cpu_group = self.tp_group.cpu_group
@@ -840,17 +849,17 @@ class Scheduler(
     @DynamicGradMode()
     def event_loop_pp(self):
         """A non-overlap scheduler loop for pipeline parallelism."""
-        micro_pp_size = self.pp_size + 4
-        mbs = [None] * micro_pp_size
-        last_mbs = [None] * micro_pp_size
+        mbs = [None] * self.micro_step_size
+        last_mbs = [None] * self.micro_step_size
         self.running_mbs = [
-            ScheduleBatch(reqs=[], batch_is_full=False) for _ in range(micro_pp_size)
+            ScheduleBatch(reqs=[], batch_is_full=False) for _ in range(self.micro_step_size)
         ]
-        bids = [None] * micro_pp_size
+        bids = [None] * self.micro_step_size
         pp_outputs: Optional[PPProxyTensors] = None
         while True:
             server_is_idle = True
-            for mb_id in range(micro_pp_size):
+            for mb_id in range(self.micro_step_size):
+                self.micro_batch_id = mb_id
                 nvtx.range_push(f"mb_id {mb_id}")
 
                 nvtx.range_push(f"request process")
@@ -914,7 +923,7 @@ class Scheduler(
                         nvtx.range_pop() # send step output
 
                 # receive outputs and post-process (filter finished reqs) the coming microbatch
-                next_mb_id = (mb_id + 1) % micro_pp_size
+                next_mb_id = (mb_id + 1) % self.micro_step_size
                 next_pp_outputs = None
                 if mbs[next_mb_id] is not None:
                     nvtx.range_push(f"recv step output")
@@ -1665,7 +1674,7 @@ class Scheduler(
 
         # Print stats
         if self.current_scheduler_metrics_enabled():
-            self.log_prefill_stats(adder, can_run_list, running_bs)
+            self.log_prefill_stats(adder, can_run_list, running_bs, self.micro_batch_id)
 
         # Create a new batch
         new_batch = ScheduleBatch.init_new(
@@ -1834,7 +1843,7 @@ class Scheduler(
         launch_done: Optional[threading.Event] = None,
     ):
         if batch.forward_mode.is_decode():
-            self.process_batch_result_decode(batch, result, launch_done)
+            self.process_batch_result_decode(batch, result, launch_done, micro_batch_id=self.micro_batch_id)
         elif batch.forward_mode.is_extend():
             self.process_batch_result_prefill(batch, result, launch_done)
         elif batch.forward_mode.is_idle():
