@@ -190,6 +190,7 @@ class SchedulerProfilerMixin:
                     os.path.join(
                         self.torch_profiler_output_dir,
                         self.profile_id
+                        + f"-PP-{self.pp_rank}"
                         + f"-TP-{self.tp_rank}"
                         + stage_suffix
                         + ".trace.json.gz",
