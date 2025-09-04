@@ -251,7 +251,7 @@ class Scheduler(
         )
 
         # for micro batch
-        self.micro_step_size = self.pp_size
+        self.micro_step_size = self.pp_size + 4
         self.micro_batch_id = 0
 
         # Init model config
