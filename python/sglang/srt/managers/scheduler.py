@@ -58,7 +58,7 @@ from sglang.srt.disaggregation.utils import (
     TransferBackend,
     prepare_abort,
 )
-from sglang.srt.distributed import get_pp_group, get_world_group
+from sglang.srt.distributed import get_pp_group, get_world_group, get_pp_output_group
 from sglang.srt.eplb.expert_distribution import get_global_expert_distribution_recorder
 from sglang.srt.hf_transformers_utils import (
     get_processor,
@@ -384,6 +384,7 @@ class Scheduler(
         self.attn_tp_cpu_group = self.tp_worker.get_attention_tp_cpu_group()
         self.pp_group = get_pp_group()
         self.world_group = get_world_group()
+        self.pp_output_group = get_pp_output_group()
 
         self.pad_input_ids_func = self.tp_worker.get_pad_input_ids_func()
         global_server_args_dict.update(worker_global_server_args_dict)
@@ -916,9 +917,9 @@ class Scheduler(
                                 }
                             )
                         # send the output from the last round to let the next stage worker run post processing
-                        self.pp_group.send_tensor_dict(
+                        self.pp_output_group.send_tensor_dict(
                             pp_outputs.tensors,
-                            all_gather_group=self.attn_tp_group,
+                            #all_gather_group=self.attn_tp_group,
                         )
                         nvtx.range_pop() # send step output
 
@@ -928,8 +929,8 @@ class Scheduler(
                 if mbs[next_mb_id] is not None:
                     nvtx.range_push(f"recv step output")
                     next_pp_outputs: Optional[PPProxyTensors] = PPProxyTensors(
-                        self.pp_group.recv_tensor_dict(
-                            all_gather_group=self.attn_tp_group
+                        self.pp_output_group.recv_tensor_dict(
+                            #all_gather_group=self.attn_tp_group
                         )
                     )
                     mbs[next_mb_id].output_ids = next_pp_outputs["next_token_ids"]
@@ -967,9 +968,9 @@ class Scheduler(
                     # carry the outputs to the next stage
                     # send the outputs from the last round to let the next stage worker run post processing
                     if pp_outputs:
-                        self.pp_group.send_tensor_dict(
+                        self.pp_output_group.send_tensor_dict(
                             pp_outputs.tensors,
-                            all_gather_group=self.attn_tp_group,
+                            #all_gather_group=self.attn_tp_group,
                         )
                     nvtx.range_pop() # forward step output
 

@@ -1266,11 +1266,16 @@ get_tensor_model_parallel_group = get_tp_group
 
 _PP: Optional[GroupCoordinator] = None
 
+_PP_OUTPUT: Optional[GroupCoordinator] = None
+
 
 def get_pp_group() -> GroupCoordinator:
     assert _PP is not None, "pipeline model parallel group is not initialized"
     return _PP
 
+def get_pp_output_group() -> GroupCoordinator:
+    assert _PP_OUTPUT is not None, "pipeline model parallel output group is not initialized"
+    return _PP_OUTPUT
 
 # kept for backward compatibility
 get_pipeline_model_parallel_group = get_pp_group
@@ -1502,6 +1507,16 @@ def initialize_model_parallel(
         backend,
         use_custom_allreduce=False,
         group_name="pp",
+    )
+
+    global _PP_OUTPUT
+    assert _PP_OUTPUT is None, "pipeline model parallel group is already initialized"
+    _PP_OUTPUT = init_model_parallel_group(
+        group_ranks,
+        get_world_group().local_rank,
+        backend,
+        use_custom_allreduce=False,
+        group_name="pp_output",
     )
 
 
