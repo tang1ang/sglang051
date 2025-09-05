@@ -917,9 +917,9 @@ class Scheduler(
                                 }
                             )
                         # send the output from the last round to let the next stage worker run post processing
-                        self.pp_output_group.send_tensor_dict(
+                        self.pp_group.send_tensor_dict(
                             pp_outputs.tensors,
-                            #all_gather_group=self.attn_tp_group,
+                            all_gather_group=self.attn_tp_group,
                         )
                         nvtx.range_pop() # send step output
 
@@ -929,8 +929,8 @@ class Scheduler(
                 if mbs[next_mb_id] is not None:
                     nvtx.range_push(f"recv step output")
                     next_pp_outputs: Optional[PPProxyTensors] = PPProxyTensors(
-                        self.pp_output_group.recv_tensor_dict(
-                            #all_gather_group=self.attn_tp_group
+                        self.pp_group.recv_tensor_dict(
+                            all_gather_group=self.attn_tp_group
                         )
                     )
                     mbs[next_mb_id].output_ids = next_pp_outputs["next_token_ids"]
@@ -968,9 +968,9 @@ class Scheduler(
                     # carry the outputs to the next stage
                     # send the outputs from the last round to let the next stage worker run post processing
                     if pp_outputs:
-                        self.pp_output_group.send_tensor_dict(
+                        self.pp_group.send_tensor_dict(
                             pp_outputs.tensors,
-                            #all_gather_group=self.attn_tp_group,
+                            all_gather_group=self.attn_tp_group,
                         )
                     nvtx.range_pop() # forward step output
 
