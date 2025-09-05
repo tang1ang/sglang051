@@ -924,7 +924,7 @@ class Scheduler(
                         nvtx.range_pop() # send step output
 
                 # receive outputs and post-process (filter finished reqs) the coming microbatch
-                next_mb_id = (mb_id + 1) % self.micro_step_size
+                next_mb_id = (mb_id + 1 + self.micro_step_size - self.pp_size) % self.micro_step_size
                 next_pp_outputs = None
                 if mbs[next_mb_id] is not None:
                     nvtx.range_push(f"recv step output")
