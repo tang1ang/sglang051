@@ -939,7 +939,7 @@ class Scheduler(
                             )
                             nvtx.range_pop() # send step output
                         else:
-                            nvtx.range_push(f"isend step output")
+                            nvtx.range_push(f"isend start")
 
                             cb = self.pp_output_group.isend(result.next_token_ids)
 
@@ -992,11 +992,14 @@ class Scheduler(
                         nvtx.range_pop() # recv step output
 
                     else:
-                        nvtx.range_push(f"irecv step output")
+                        nvtx.range_push(f"isend wait")
                         if token_rs_results[next_recv_token_mb_id] is not None:
                             assert token_rs_results[next_recv_token_mb_id].status == TokenOutputAsyncStatus.SENDING
                             token_rs_results[next_recv_token_mb_id].cb_work.wait()
                             token_rs_results[next_recv_token_mb_id] = None
+                        nvtx.range_pop() # isend wait
+
+                        nvtx.range_push(f"irecv start")
                         output_token_size = mbs[next_recv_token_mb_id].batch_size()
                         cb, token_output = self.pp_output_group.irecv([output_token_size], torch.int64)
                         token_rs_results[next_recv_token_mb_id] = TokenOutputAsyncResult(
@@ -1008,6 +1011,8 @@ class Scheduler(
 
                 check_cb_start_id = mb_id
 
+                nvtx.range_push(f"step output async")
+
                 for i in range(self.micro_step_size - self.pp_size + 2):
                     if token_rs_results[check_cb_start_id] is not None:
                         if i == 0:
@@ -1016,17 +1021,22 @@ class Scheduler(
                                     token_rs_results[check_cb_start_id].status == TokenOutputAsyncStatus.SENDING
                                 
                                 if token_rs_results[check_cb_start_id].status == TokenOutputAsyncStatus.RECVED:
+                                    
+                                    nvtx.range_push(f"isend start")
                                     cb = self.pp_output_group.isend(token_rs_results[check_cb_start_id].token_output)
                                     token_rs_results[check_cb_start_id].status == TokenOutputAsyncStatus.SENDING
                                     token_rs_results[check_cb_start_id].cb_work = cb
+                                    nvtx.range_pop() # isend start
 
                         else: # i != 0
                             if token_rs_results[check_cb_start_id].status == TokenOutputAsyncStatus.RECVING:
                                 finish_recv = False
                                 if i == 1:
+                                    nvtx.range_push(f"irecv wait")
                                     token_rs_results[check_cb_start_id].cb_work.wait()
                                     token_rs_results[check_cb_start_id].status = TokenOutputAsyncStatus.RECVED
                                     finish_recv = True
+                                    nvtx.range_pop() # isend start
                                 else:
                                     if token_rs_results[check_cb_start_id].cb_work.is_completed():
                                         token_rs_results[check_cb_start_id].status = TokenOutputAsyncStatus.RECVED
@@ -1049,24 +1059,30 @@ class Scheduler(
 
                                 if not self.pp_group.is_last_rank:
                                     if i != self.micro_step_size - self.pp_size + 1:
+                                        nvtx.range_push(f"isend start")
                                         token_rs_results[check_cb_start_id].cb_work = \
                                             self.pp_output_group.isend(token_rs_results[check_cb_start_id].token_output)
                                         token_rs_results[check_cb_start_id].status = TokenOutputAsyncStatus.SENDING
+                                        nvtx.range_pop() # isend start
 
                                 else:
                                     token_rs_results[check_cb_start_id] = None
 
                             elif token_rs_results[check_cb_start_id].status == TokenOutputAsyncStatus.RECVED:
                                     if i != self.micro_step_size - self.pp_size + 1:
+                                        nvtx.range_push(f"isend start")
                                         token_rs_results[check_cb_start_id].cb_work = \
                                             self.pp_output_group.isend(token_rs_results[check_cb_start_id].token_output)
                                         token_rs_results[check_cb_start_id].status = TokenOutputAsyncStatus.SENDING
+                                        nvtx.range_pop() # isend start
                                         
                             elif token_rs_results[check_cb_start_id].status == TokenOutputAsyncStatus.SENDING:
                                 if token_rs_results[check_cb_start_id].cb_work.is_completed():
                                     token_rs_results[check_cb_start_id] = None
                         
                     check_cb_start_id = (check_cb_start_id + i + 1) % self.micro_step_size
+
+                nvtx.range_pop() # step output async
 
                 # (not last rank)
                 if not self.pp_group.is_last_rank:
