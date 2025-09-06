@@ -1037,6 +1037,7 @@ class Scheduler(
                                         finish_recv = True
                                 if finish_recv:
                                     print(f"---- PP{self.pp_group.local_rank} mb_id {check_cb_start_id} recv done: {token_rs_results[check_cb_start_id].token_output}")
+                                    mbs[check_cb_start_id].output_ids = token_rs_results[check_cb_start_id].token_output
                                     output_result = GenerationBatchResult(
                                         logits_output=None,
                                         pp_hidden_states_proxy_tensors=None,
