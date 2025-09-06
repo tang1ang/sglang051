@@ -875,6 +875,7 @@ class Scheduler(
         while True:
             server_is_idle = True
             for mb_id in range(self.micro_step_size):
+                logger.info(f"----- PP{self.pp_group.rank} mb_id {mb_id} start -------")
                 self.micro_batch_id = mb_id
                 nvtx.range_push(f"mb_id {mb_id}")
 
