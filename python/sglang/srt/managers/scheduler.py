@@ -946,6 +946,8 @@ class Scheduler(
                             token_rs_results[mb_id] = TokenOutputAsyncResult(
                                 None, cb, TokenOutputAsyncStatus.SENDING
                             )
+                            print(f"---- PP{self.pp_group.local_rank} mb_id {mb_id} sending: {result.next_token_ids}")
+
                             nvtx.range_pop() # isend step output
 
 
@@ -996,6 +998,7 @@ class Scheduler(
                             assert token_rs_results[next_recv_token_mb_id].status == TokenOutputAsyncStatus.SENDING
                             token_rs_results[next_recv_token_mb_id].cb_work.wait()
                             token_rs_results[next_recv_token_mb_id] = None
+                            print(f"---- PP{self.pp_group.local_rank} mb_id {next_recv_token_mb_id} send done")
                         output_token_size = mbs[next_recv_token_mb_id].batch_size()
                         cb, token_output = self.pp_output_group.irecv([output_token_size], torch.int64)
                         token_rs_results[next_recv_token_mb_id] = TokenOutputAsyncResult(
@@ -1003,6 +1006,7 @@ class Scheduler(
                             cb_work=cb,
                             status=TokenOutputAsyncStatus.RECVING,
                         )   
+                        print(f"---- PP{self.pp_group.local_rank} mb_id {next_recv_token_mb_id} recving")
                         nvtx.range_pop() # irecv token output
 
                 check_cb_start_id = mb_id
@@ -1018,6 +1022,7 @@ class Scheduler(
                                     cb = self.pp_output_group.isend(token_rs_results[check_cb_start_id].token_output)
                                     token_rs_results[check_cb_start_id].status == TokenOutputAsyncStatus.SENDING
                                     token_rs_results[check_cb_start_id].cb_work = cb
+                                    print(f"---- PP{self.pp_group.local_rank} mb_id {check_cb_start_id} sending")
 
                         else: # i != 0
                             if token_rs_results[check_cb_start_id].status == TokenOutputAsyncStatus.RECVING:
@@ -1031,6 +1036,7 @@ class Scheduler(
                                         token_rs_results[check_cb_start_id].status = TokenOutputAsyncStatus.RECVED
                                         finish_recv = True
                                 if finish_recv:
+                                    print(f"---- PP{self.pp_group.local_rank} mb_id {check_cb_start_id} recv done: {token_rs_results[check_cb_start_id].token_output}")
                                     output_result = GenerationBatchResult(
                                         logits_output=None,
                                         pp_hidden_states_proxy_tensors=None,
@@ -1050,6 +1056,8 @@ class Scheduler(
                                         token_rs_results[check_cb_start_id].cb_work = \
                                             self.pp_output_group.isend(token_rs_results[check_cb_start_id].token_output)
                                         token_rs_results[check_cb_start_id].status = TokenOutputAsyncStatus.SENDING
+                                        print(f"---- PP{self.pp_group.local_rank} mb_id {check_cb_start_id} sending")
+
                                 else:
                                     token_rs_results[check_cb_start_id] = None
 
@@ -1058,10 +1066,12 @@ class Scheduler(
                                         token_rs_results[check_cb_start_id].cb_work = \
                                             self.pp_output_group.isend(token_rs_results[check_cb_start_id].token_output)
                                         token_rs_results[check_cb_start_id].status = TokenOutputAsyncStatus.SENDING
+                                        print(f"---- PP{self.pp_group.local_rank} mb_id {check_cb_start_id} sending")
                                         
                             elif token_rs_results[check_cb_start_id].status == TokenOutputAsyncStatus.SENDING:
                                 if token_rs_results[check_cb_start_id].cb_work.is_completed():
                                     token_rs_results[check_cb_start_id] = None
+                                    print(f"---- PP{self.pp_group.local_rank} mb_id {check_cb_start_id} send done")
                         
                     check_cb_start_id = (check_cb_start_id + i + 1) % self.micro_step_size
 
