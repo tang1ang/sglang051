@@ -26,6 +26,8 @@ from dataclasses import dataclass
 from http import HTTPStatus
 from types import SimpleNamespace
 from typing import Dict, List, Optional, Tuple, Union
+from enum import IntEnum, auto
+
 
 import psutil
 import setproctitle
@@ -189,6 +191,18 @@ class GenerationBatchResult:
 class EmbeddingBatchResult:
     embeddings: torch.Tensor
     bid: int
+
+class TokenOutputAsyncStatus(IntEnum):
+    RECVING = auto()
+    RECVED = auto()
+    SENDING = auto()
+    FINISH = auto()
+
+@dataclass
+class TokenOutputAsyncResult:
+    token_output: torch.Tensor
+    cb_work: torch.distributed.Work
+    status: TokenOutputAsyncStatus
 
 
 class Scheduler(
@@ -852,6 +866,7 @@ class Scheduler(
         """A non-overlap scheduler loop for pipeline parallelism."""
         mbs = [None] * self.micro_step_size
         last_mbs = [None] * self.micro_step_size
+        token_rs_results = [None] * self.micro_step_size
         self.running_mbs = [
             ScheduleBatch(reqs=[], batch_is_full=False) for _ in range(self.micro_step_size)
         ]
@@ -889,76 +904,166 @@ class Scheduler(
                 # (last rank) send the outputs to the next step
                 if self.pp_group.is_last_rank:
                     if self.cur_batch:
-                        nvtx.range_push(f"send step output")
-                        next_token_ids, bids[mb_id] = (
-                            result.next_token_ids,
-                            result.bid,
-                        )
                         if self.cur_batch.return_logprob:
-                            pp_outputs = PPProxyTensors(
-                                {
-                                    "next_token_ids": next_token_ids,
-                                    "extend_input_len_per_req": result.extend_input_len_per_req,
-                                    "extend_logprob_start_len_per_req": result.extend_logprob_start_len_per_req,
-                                }
-                                | (
+                            nvtx.range_push(f"send step output")
+                            next_token_ids, bids[mb_id] = (
+                                result.next_token_ids,
+                                result.bid,
+                            )
+                            if self.cur_batch.return_logprob:
+                                pp_outputs = PPProxyTensors(
                                     {
-                                        f"logits_output.{k}": v
-                                        for k, v in result.logits_output.__dict__.items()
+                                        "next_token_ids": next_token_ids,
+                                        "extend_input_len_per_req": result.extend_input_len_per_req,
+                                        "extend_logprob_start_len_per_req": result.extend_logprob_start_len_per_req,
                                     }
-                                    if result.logits_output is not None
-                                    else {}
+                                    | (
+                                        {
+                                            f"logits_output.{k}": v
+                                            for k, v in result.logits_output.__dict__.items()
+                                        }
+                                        if result.logits_output is not None
+                                        else {}
+                                    )
                                 )
+                            else:
+                                pp_outputs = PPProxyTensors(
+                                    {
+                                        "next_token_ids": next_token_ids,
+                                    }
+                                )
+                            # send the output from the last round to let the next stage worker run post processing
+                            self.pp_group.send_tensor_dict(
+                                pp_outputs.tensors,
+                                all_gather_group=self.attn_tp_group,
                             )
+                            nvtx.range_pop() # send step output
                         else:
-                            pp_outputs = PPProxyTensors(
-                                {
-                                    "next_token_ids": next_token_ids,
-                                }
+                            nvtx.range_push(f"isend step output")
+
+                            cb = self.pp_output_group.isend(result.next_token_ids)
+
+                            token_rs_results[mb_id] = TokenOutputAsyncResult(
+                                None, cb, TokenOutputAsyncStatus.SENDING
                             )
-                        # send the output from the last round to let the next stage worker run post processing
-                        self.pp_group.send_tensor_dict(
-                            pp_outputs.tensors,
-                            all_gather_group=self.attn_tp_group,
-                        )
-                        nvtx.range_pop() # send step output
+                            nvtx.range_pop() # isend step output
+
+
 
                 # receive outputs and post-process (filter finished reqs) the coming microbatch
-                next_mb_id = (mb_id + 1 + self.micro_step_size - self.pp_size) % self.micro_step_size
+
                 next_pp_outputs = None
-                if mbs[next_mb_id] is not None:
-                    nvtx.range_push(f"recv step output")
-                    next_pp_outputs: Optional[PPProxyTensors] = PPProxyTensors(
-                        self.pp_group.recv_tensor_dict(
-                            all_gather_group=self.attn_tp_group
+                next_recv_token_mb_id = (mb_id + 1 + self.micro_step_size - self.pp_size) % self.micro_step_size
+
+                if mbs[next_recv_token_mb_id] is not None:
+                    if mbs[next_recv_token_mb_id].return_logprob:
+                        nvtx.range_push(f"recv step output")
+                        next_pp_outputs: Optional[PPProxyTensors] = PPProxyTensors(
+                            self.pp_group.recv_tensor_dict(
+                                all_gather_group=self.attn_tp_group
+                            )   
+                        ) 
+                        mbs[next_recv_token_mb_id].output_ids = next_pp_outputs["next_token_ids"]
+                        logits_output_args = {
+                            k[len("logits_output.") :]: v
+                            for k, v in next_pp_outputs.tensors.items()
+                            if k.startswith("logits_output.")
+                        }
+                        if len(logits_output_args) > 0:
+                            logits_output = LogitsProcessorOutput(**logits_output_args)
+                        else:
+                            logits_output = None
+                        output_result = GenerationBatchResult(
+                            logits_output=logits_output,
+                            pp_hidden_states_proxy_tensors=None,
+                            next_token_ids=next_pp_outputs["next_token_ids"],
+                            extend_input_len_per_req=next_pp_outputs.tensors.get(
+                                "extend_input_len_per_req", None
+                            ),
+                            extend_logprob_start_len_per_req=next_pp_outputs.tensors.get(
+                                "extend_logprob_start_len_per_req", None
+                            ),
+                            bid=bids[next_recv_token_mb_id],
+                            can_run_cuda_graph=result.can_run_cuda_graph,
                         )
-                    )
-                    mbs[next_mb_id].output_ids = next_pp_outputs["next_token_ids"]
-                    logits_output_args = {
-                        k[len("logits_output.") :]: v
-                        for k, v in next_pp_outputs.tensors.items()
-                        if k.startswith("logits_output.")
-                    }
-                    if len(logits_output_args) > 0:
-                        logits_output = LogitsProcessorOutput(**logits_output_args)
+                        self.process_batch_result(mbs[next_recv_token_mb_id], output_result)
+                        last_mbs[next_recv_token_mb_id] = mbs[next_recv_token_mb_id] 
+                        nvtx.range_pop() # recv step output
+
                     else:
-                        logits_output = None
-                    output_result = GenerationBatchResult(
-                        logits_output=logits_output,
-                        pp_hidden_states_proxy_tensors=None,
-                        next_token_ids=next_pp_outputs["next_token_ids"],
-                        extend_input_len_per_req=next_pp_outputs.tensors.get(
-                            "extend_input_len_per_req", None
-                        ),
-                        extend_logprob_start_len_per_req=next_pp_outputs.tensors.get(
-                            "extend_logprob_start_len_per_req", None
-                        ),
-                        bid=bids[next_mb_id],
-                        can_run_cuda_graph=result.can_run_cuda_graph,
-                    )
-                    self.process_batch_result(mbs[next_mb_id], output_result)
-                    last_mbs[next_mb_id] = mbs[next_mb_id]
-                    nvtx.range_pop() # recv step output
+                        nvtx.range_push(f"irecv step output")
+                        if token_rs_results[next_recv_token_mb_id] is not None:
+                            assert token_rs_results[next_recv_token_mb_id].status == TokenOutputAsyncStatus.SENDING
+                            token_rs_results[next_recv_token_mb_id].cb_work.wait()
+                            token_rs_results[next_recv_token_mb_id] = None
+                        output_token_size = mbs[next_recv_token_mb_id].batch_size()
+                        cb, token_output = self.pp_output_group.irecv([output_token_size], torch.int64)
+                        token_rs_results[next_recv_token_mb_id] = TokenOutputAsyncResult(
+                            token_output=token_output,
+                            cb_work=cb,
+                            status=TokenOutputAsyncStatus.RECVING,
+                        )   
+                        nvtx.range_pop() # irecv token output
+
+                check_cb_start_id = mb_id
+
+                for i in range(self.micro_step_size - self.pp_size + 2):
+                    if token_rs_results[check_cb_start_id] is not None:
+                        if i == 0:
+                            if not self.pp_group.is_last_rank:
+                                assert token_rs_results[check_cb_start_id].status == TokenOutputAsyncStatus.RECVED or \
+                                    token_rs_results[check_cb_start_id].status == TokenOutputAsyncStatus.SENDING
+                                
+                                if token_rs_results[check_cb_start_id].status == TokenOutputAsyncStatus.RECVED:
+                                    cb = self.pp_output_group.isend(token_rs_results[check_cb_start_id].token_output)
+                                    token_rs_results[check_cb_start_id].status == TokenOutputAsyncStatus.SENDING
+                                    token_rs_results[check_cb_start_id].cb_work = cb
+
+                        else: # i != 0
+                            if token_rs_results[check_cb_start_id].status == TokenOutputAsyncStatus.RECVING:
+                                finish_recv = False
+                                if i == 1:
+                                    token_rs_results[check_cb_start_id].cb_work.wait()
+                                    token_rs_results[check_cb_start_id].status = TokenOutputAsyncStatus.RECVED
+                                    finish_recv = True
+                                else:
+                                    if token_rs_results[check_cb_start_id].cb_work.is_completed():
+                                        token_rs_results[check_cb_start_id].status = TokenOutputAsyncStatus.RECVED
+                                        finish_recv = True
+                                if finish_recv:
+                                    output_result = GenerationBatchResult(
+                                        logits_output=None,
+                                        pp_hidden_states_proxy_tensors=None,
+                                        next_token_ids=token_rs_results[check_cb_start_id].token_output,
+                                        extend_input_len_per_req=None,
+                                        extend_logprob_start_len_per_req=None,
+                                        bid=bids[check_cb_start_id],
+                                        can_run_cuda_graph=result.can_run_cuda_graph,
+                                    )
+                                    self.process_batch_result(mbs[check_cb_start_id], output_result)
+                                    last_mbs[check_cb_start_id] = mbs[check_cb_start_id] 
+                                else:
+                                    break
+
+                                if not self.pp_group.is_last_rank:
+                                    if i != self.micro_step_size - self.pp_size + 1:
+                                        token_rs_results[check_cb_start_id].cb_work = \
+                                            self.pp_output_group.isend(token_rs_results[check_cb_start_id].token_output)
+                                        token_rs_results[check_cb_start_id].status = TokenOutputAsyncStatus.SENDING
+                                else:
+                                    token_rs_results[check_cb_start_id] = None
+
+                            elif token_rs_results[check_cb_start_id].status == TokenOutputAsyncStatus.RECVED:
+                                    if i != self.micro_step_size - self.pp_size + 1:
+                                        token_rs_results[check_cb_start_id].cb_work = \
+                                            self.pp_output_group.isend(token_rs_results[check_cb_start_id].token_output)
+                                        token_rs_results[check_cb_start_id].status = TokenOutputAsyncStatus.SENDING
+                                        
+                            elif token_rs_results[check_cb_start_id].status == TokenOutputAsyncStatus.SENDING:
+                                if token_rs_results[check_cb_start_id].cb_work.is_completed():
+                                    token_rs_results[check_cb_start_id] = None
+                        
+                    check_cb_start_id = (check_cb_start_id + i + 1) % self.micro_step_size
 
                 # (not last rank)
                 if not self.pp_group.is_last_rank:
