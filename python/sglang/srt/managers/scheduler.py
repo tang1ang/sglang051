@@ -1031,7 +1031,7 @@ class Scheduler(
                 nvtx.range_push(f"step output async")
 
                 for i in range(self.micro_step_size - self.pp_size + 2):
-
+                    logger.info(f"----- check loop i {i} mb_id {mb_id} handle_id {check_cb_start_id}")
                     if token_rs_results[check_cb_start_id] is not None:
                         logger.info(f"----- check loop i {i} mb_id {mb_id} handle_id {check_cb_start_id} status {token_rs_results[check_cb_start_id].status}")
                         if i == 0:
