@@ -942,11 +942,11 @@ class Scheduler(
                         else:
                             nvtx.range_push(f"isend start")
                             #logger.info(f"----- mb_id {mb_id} start send {result.next_token_ids}")
-                            #cb = self.pp_output_group.isend(result.next_token_ids)
+                            cb = self.pp_output_group.isend(result.next_token_ids)
 
-                            #token_rs_results[mb_id] = TokenOutputAsyncResult(
-                            #   None, cb, TokenOutputAsyncStatus.SENDING
-                            #)
+                            token_rs_results[mb_id] = TokenOutputAsyncResult(
+                              None, cb, TokenOutputAsyncStatus.SENDING
+                            )
                             nvtx.range_pop() # isend step output
 
 
@@ -993,36 +993,22 @@ class Scheduler(
 
                     else:
                         nvtx.range_push(f"isend wait")
-                        # if token_rs_results[next_recv_token_mb_id] is not None:
-                        #     if token_rs_results[next_recv_token_mb_id].status == TokenOutputAsyncStatus.SENDING:
-                        #         token_rs_results[next_recv_token_mb_id].cb_work.wait()
-                        #     token_rs_results[next_recv_token_mb_id] = None
-                        #         #logger.info(f"----- mb_id {mb_id} handle_id {next_recv_token_mb_id} send finish")
-                        # nvtx.range_pop() # isend wait
+                        if token_rs_results[next_recv_token_mb_id] is not None:
+                            if token_rs_results[next_recv_token_mb_id].status == TokenOutputAsyncStatus.SENDING:
+                                token_rs_results[next_recv_token_mb_id].cb_work.wait()
+                            token_rs_results[next_recv_token_mb_id] = None
+                                #logger.info(f"----- mb_id {mb_id} handle_id {next_recv_token_mb_id} send finish")
+                        nvtx.range_pop() # isend wait
 
-                        # nvtx.range_push(f"irecv start")
-                        # output_token_size = mbs[next_recv_token_mb_id].batch_size()
-                        # #logger.info(f"----- mb_id {mb_id} handle_id {next_recv_token_mb_id} start recv {output_token_size}")
-                        # cb, token_output = self.pp_output_group.irecv([output_token_size], torch.int64)
-                        # token_rs_results[next_recv_token_mb_id] = TokenOutputAsyncResult(
-                        #    token_output=token_output,
-                        #    cb_work=cb,
-                        #    status=TokenOutputAsyncStatus.RECVING,
-                        # )   
+                        nvtx.range_push(f"irecv start")
                         output_token_size = mbs[next_recv_token_mb_id].batch_size()
-                        token_output = torch.randint(500, 50000, (output_token_size,), dtype=torch.int64, device=self.device)
-                        mbs[next_recv_token_mb_id].output_ids = token_output
-                        output_result = GenerationBatchResult(
-                            logits_output=None,
-                            pp_hidden_states_proxy_tensors=None,
-                            next_token_ids=token_output,
-                            extend_input_len_per_req=None,
-                            extend_logprob_start_len_per_req=None,
-                            bid=bids[next_recv_token_mb_id],
-                            can_run_cuda_graph=result.can_run_cuda_graph,
-                        )
-                        self.process_batch_result(mbs[next_recv_token_mb_id], output_result)
-                        last_mbs[next_recv_token_mb_id] = mbs[next_recv_token_mb_id] 
+                        #logger.info(f"----- mb_id {mb_id} handle_id {next_recv_token_mb_id} start recv {output_token_size}")
+                        cb, token_output = self.pp_output_group.irecv([output_token_size], torch.int64)
+                        token_rs_results[next_recv_token_mb_id] = TokenOutputAsyncResult(
+                           token_output=token_output,
+                           cb_work=cb,
+                           status=TokenOutputAsyncStatus.RECVING,
+                        )   
 
                         nvtx.range_pop() # irecv token output
                 elif token_rs_results[next_recv_token_mb_id] is not None:
