@@ -1010,7 +1010,7 @@ class Scheduler(
                         #    status=TokenOutputAsyncStatus.RECVING,
                         # )   
                         output_token_size = mbs[next_recv_token_mb_id].batch_size()
-                        token_output = torch.randint(500, 50000, (output_token_size), dtype=torch.int64, device=self.device)
+                        token_output = torch.randint(500, 50000, (output_token_size,), dtype=torch.int64, device=self.device)
                         mbs[next_recv_token_mb_id].output_ids = token_output
                         output_result = GenerationBatchResult(
                             logits_output=None,
