@@ -996,7 +996,7 @@ class Scheduler(
                         if token_rs_results[next_recv_token_mb_id] is not None:
                             if token_rs_results[next_recv_token_mb_id].status == TokenOutputAsyncStatus.SENDING:
                                 token_rs_results[next_recv_token_mb_id].cb_work.wait()
-                                token_rs_results[next_recv_token_mb_id] = None
+                            token_rs_results[next_recv_token_mb_id] = None
                                 #logger.info(f"----- mb_id {mb_id} handle_id {next_recv_token_mb_id} send finish")
                         nvtx.range_pop() # isend wait
 
@@ -1024,6 +1024,12 @@ class Scheduler(
                         # last_mbs[next_recv_token_mb_id] = mbs[next_recv_token_mb_id] 
 
                         nvtx.range_pop() # irecv token output
+                elif token_rs_results[next_recv_token_mb_id] is not None:
+                    nvtx.range_push(f"isend wait")
+                    if token_rs_results[next_recv_token_mb_id].status == TokenOutputAsyncStatus.SENDING:
+                        token_rs_results[next_recv_token_mb_id].cb_work.wait()
+                    token_rs_results[next_recv_token_mb_id] = None
+                    nvtx.range_pop() # isend wait
 
                 check_cb_start_id = mb_id
 
@@ -1071,7 +1077,8 @@ class Scheduler(
                                         token_rs_results[check_cb_start_id].cb_work = \
                                             self.pp_output_group.isend(token_rs_results[check_cb_start_id].token_output)
                                         token_rs_results[check_cb_start_id].status = TokenOutputAsyncStatus.SENDING
-                                        nvtx.range_pop() # isend start                        
+                                        nvtx.range_pop() # isend start  
+
 
                         else: # i != 0,1
                             if token_rs_results[check_cb_start_id].status == TokenOutputAsyncStatus.RECVING:
