@@ -1034,9 +1034,6 @@ class Scheduler(
                         #logger.info(f"----- check loop i {i} mb_id {mb_id} handle_id {check_cb_start_id} status {token_rs_results[check_cb_start_id].status}")
                         if i == 0:
                             if not self.pp_group.is_last_rank:
-                                assert token_rs_results[check_cb_start_id].status == TokenOutputAsyncStatus.RECVED or \
-                                    token_rs_results[check_cb_start_id].status == TokenOutputAsyncStatus.SENDING
-                                
                                 if token_rs_results[check_cb_start_id].status == TokenOutputAsyncStatus.RECVED:
                                     nvtx.range_push(f"isend start")
                                     logger.info(f"----- mb_id {mb_id} handle_id {check_cb_start_id} start send")
