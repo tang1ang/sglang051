@@ -864,6 +864,7 @@ class Scheduler(
     @DynamicGradMode()
     def event_loop_pp(self):
         """A non-overlap scheduler loop for pipeline parallelism."""
+        async_comm_init_status = False
         mbs = [None] * self.micro_step_size
         last_mbs = [None] * self.micro_step_size
         token_rs_results = [None] * self.micro_step_size
@@ -1049,10 +1050,11 @@ class Scheduler(
                             if token_rs_results[check_cb_start_id].status == TokenOutputAsyncStatus.RECVING:
                                 nvtx.range_push(f"irecv wait")
                                 finish_recv = False
-                                if i == 1:
+                                if i == 1 or (not async_comm_init_status and i == self.micro_step_size - self.pp_size + 1):
                                     token_rs_results[check_cb_start_id].cb_work.wait()
                                     token_rs_results[check_cb_start_id].status = TokenOutputAsyncStatus.RECVED
                                     finish_recv = True
+                                    async_comm_init_status = True
                                 else:
                                     if token_rs_results[check_cb_start_id].cb_work.is_completed():
                                         token_rs_results[check_cb_start_id].status = TokenOutputAsyncStatus.RECVED
