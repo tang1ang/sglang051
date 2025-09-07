@@ -941,7 +941,7 @@ class Scheduler(
                             nvtx.range_pop() # send step output
                         else:
                             nvtx.range_push(f"isend start")
-                            logger.info(f"----- mb_id {mb_id} start send {result.next_token_ids}")
+                            #logger.info(f"----- mb_id {mb_id} start send {result.next_token_ids}")
                             cb = self.pp_output_group.isend(result.next_token_ids)
 
                             token_rs_results[mb_id] = TokenOutputAsyncResult(
@@ -997,12 +997,12 @@ class Scheduler(
                             if token_rs_results[next_recv_token_mb_id].status == TokenOutputAsyncStatus.SENDING:
                                 token_rs_results[next_recv_token_mb_id].cb_work.wait()
                                 token_rs_results[next_recv_token_mb_id] = None
-                                logger.info(f"----- mb_id {mb_id} handle_id {next_recv_token_mb_id} send finish")
+                                #logger.info(f"----- mb_id {mb_id} handle_id {next_recv_token_mb_id} send finish")
                         nvtx.range_pop() # isend wait
 
                         nvtx.range_push(f"irecv start")
                         output_token_size = mbs[next_recv_token_mb_id].batch_size()
-                        logger.info(f"----- mb_id {mb_id} handle_id {next_recv_token_mb_id} start recv {output_token_size}")
+                        #logger.info(f"----- mb_id {mb_id} handle_id {next_recv_token_mb_id} start recv {output_token_size}")
                         cb, token_output = self.pp_output_group.irecv([output_token_size], torch.int64)
                         token_rs_results[next_recv_token_mb_id] = TokenOutputAsyncResult(
                            token_output=token_output,
@@ -1036,7 +1036,7 @@ class Scheduler(
                             if not self.pp_group.is_last_rank:
                                 if token_rs_results[check_cb_start_id].status == TokenOutputAsyncStatus.RECVED:
                                     nvtx.range_push(f"isend start")
-                                    logger.info(f"----- mb_id {mb_id} handle_id {check_cb_start_id} start send")
+                                    #logger.info(f"----- mb_id {mb_id} handle_id {check_cb_start_id} start send")
                                     cb = self.pp_output_group.isend(token_rs_results[check_cb_start_id].token_output)
                                     token_rs_results[check_cb_start_id].status == TokenOutputAsyncStatus.SENDING
                                     token_rs_results[check_cb_start_id].cb_work = cb
@@ -1045,9 +1045,9 @@ class Scheduler(
                             if token_rs_results[check_cb_start_id].status == TokenOutputAsyncStatus.RECVING:
                                 token_rs_results[check_cb_start_id].cb_work.wait()
                                 token_rs_results[check_cb_start_id].status = TokenOutputAsyncStatus.RECVED
-                                logger.info(f"----- mb_id {mb_id} handle_id {check_cb_start_id} recved")
+                                #logger.info(f"----- mb_id {mb_id} handle_id {check_cb_start_id} recved")
 
-                            logger.info(f"----- mb_id {mb_id} handle_id {check_cb_start_id} process")
+                            #logger.info(f"----- mb_id {mb_id} handle_id {check_cb_start_id} process")
                             mbs[check_cb_start_id].output_ids = token_rs_results[check_cb_start_id].token_output
                             output_result = GenerationBatchResult(
                                 logits_output=None,
@@ -1067,7 +1067,7 @@ class Scheduler(
                                 if token_rs_results[check_cb_start_id].status == TokenOutputAsyncStatus.RECVED \
                                     and i != self.micro_step_size - self.pp_size + 1:
                                         nvtx.range_push(f"isend start")
-                                        logger.info(f"----- mb_id {mb_id} handle_id {check_cb_start_id} start send")
+                                        #logger.info(f"----- mb_id {mb_id} handle_id {check_cb_start_id} start send")
                                         token_rs_results[check_cb_start_id].cb_work = \
                                             self.pp_output_group.isend(token_rs_results[check_cb_start_id].token_output)
                                         token_rs_results[check_cb_start_id].status = TokenOutputAsyncStatus.SENDING
@@ -1079,7 +1079,7 @@ class Scheduler(
    
                                 if token_rs_results[check_cb_start_id].cb_work.is_completed():
                                     token_rs_results[check_cb_start_id].status = TokenOutputAsyncStatus.RECVED
-                                    logger.info(f"----- mb_id {mb_id} handle_id {check_cb_start_id} recved")
+                                    #logger.info(f"----- mb_id {mb_id} handle_id {check_cb_start_id} recved")
                                     nvtx.range_pop() # irecv wait
                                 else:
                                     nvtx.range_pop() # irecv wait
@@ -1088,7 +1088,7 @@ class Scheduler(
                             if not self.pp_group.is_last_rank and token_rs_results[check_cb_start_id].status == TokenOutputAsyncStatus.RECVED:
                                     if i != self.micro_step_size - self.pp_size + 1:
                                         nvtx.range_push(f"isend start")
-                                        logger.info(f"----- mb_id {mb_id} handle_id {check_cb_start_id} start send")
+                                        #logger.info(f"----- mb_id {mb_id} handle_id {check_cb_start_id} start send")
                                         token_rs_results[check_cb_start_id].cb_work = \
                                             self.pp_output_group.isend(token_rs_results[check_cb_start_id].token_output)
                                         token_rs_results[check_cb_start_id].status = TokenOutputAsyncStatus.SENDING
@@ -1098,7 +1098,7 @@ class Scheduler(
                                 nvtx.range_push(f"isend wait")
                                 if token_rs_results[check_cb_start_id].cb_work.is_completed():
                                     token_rs_results[check_cb_start_id].status = TokenOutputAsyncStatus.FINISH
-                                    logger.info(f"----- mb_id {mb_id} handle_id {check_cb_start_id} send finish")
+                                    #logger.info(f"----- mb_id {mb_id} handle_id {check_cb_start_id} send finish")
                                 nvtx.range_pop() # isend wait
                         
                     check_cb_start_id = (check_cb_start_id + 1) % self.micro_step_size
