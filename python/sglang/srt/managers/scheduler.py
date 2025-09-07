@@ -994,10 +994,10 @@ class Scheduler(
                     else:
                         nvtx.range_push(f"isend wait")
                         if token_rs_results[next_recv_token_mb_id] is not None:
-                            assert token_rs_results[next_recv_token_mb_id].status == TokenOutputAsyncStatus.SENDING
-                            token_rs_results[next_recv_token_mb_id].cb_work.wait()
-                            token_rs_results[next_recv_token_mb_id] = None
-                            logger.info(f"----- mb_id {mb_id} handle_id {next_recv_token_mb_id} send finish")
+                            if token_rs_results[next_recv_token_mb_id].status == TokenOutputAsyncStatus.SENDING:
+                                token_rs_results[next_recv_token_mb_id].cb_work.wait()
+                                token_rs_results[next_recv_token_mb_id] = None
+                                logger.info(f"----- mb_id {mb_id} handle_id {next_recv_token_mb_id} send finish")
                         nvtx.range_pop() # isend wait
 
                         nvtx.range_push(f"irecv start")
