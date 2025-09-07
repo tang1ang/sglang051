@@ -1011,7 +1011,7 @@ class Scheduler(
                         #)   
 
                         token_output = torch.tensor([578] * output_token_size, dtype=torch.int64, device=self.device)
-                        output_ids = token_output
+                        mbs[next_recv_token_mb_id].output_ids = token_output
                         output_result = GenerationBatchResult(
                             logits_output=None,
                             pp_hidden_states_proxy_tensors=None,
