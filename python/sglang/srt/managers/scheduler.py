@@ -940,12 +940,12 @@ class Scheduler(
                             nvtx.range_pop() # send step output
                         else:
                             nvtx.range_push(f"isend start")
-                            #logger.info(f"----- PP{self.pp_group.rank} mb_id {mb_id} start send {result.next_token_ids}")
-                            #cb = self.pp_output_group.isend(result.next_token_ids)
+                            logger.info(f"----- mb_id {mb_id} start send {result.next_token_ids}")
+                            cb = self.pp_output_group.isend(result.next_token_ids)
 
-                            #token_rs_results[mb_id] = TokenOutputAsyncResult(
-                            #    None, cb, TokenOutputAsyncStatus.SENDING
-                            #)
+                            token_rs_results[mb_id] = TokenOutputAsyncResult(
+                               None, cb, TokenOutputAsyncStatus.SENDING
+                            )
 
                             nvtx.range_pop() # isend step output
 
@@ -997,32 +997,31 @@ class Scheduler(
                             assert token_rs_results[next_recv_token_mb_id].status == TokenOutputAsyncStatus.SENDING
                             token_rs_results[next_recv_token_mb_id].cb_work.wait()
                             token_rs_results[next_recv_token_mb_id] = None
-                            #logger.info(f"----- PP{self.pp_group.rank} mb_id {next_recv_token_mb_id} send finish")
+                            logger.info(f"----- mb_id {mb_id} handle_id {next_recv_token_mb_id} send finish")
                         nvtx.range_pop() # isend wait
 
                         nvtx.range_push(f"irecv start")
                         output_token_size = mbs[next_recv_token_mb_id].batch_size()
-                        #logger.info(f"----- PP{self.pp_group.rank} mb_id {next_recv_token_mb_id} start recv {output_token_size}")
-                        #cb, token_output = self.pp_output_group.irecv([output_token_size], torch.int64)
-                        #token_rs_results[next_recv_token_mb_id] = TokenOutputAsyncResult(
-                        #    token_output=token_output,
-                        #    cb_work=cb,
-                        #    status=TokenOutputAsyncStatus.RECVING,
-                        #)   
-
-                        token_output = torch.tensor([578] * output_token_size, dtype=torch.int64, device=self.device)
-                        mbs[next_recv_token_mb_id].output_ids = token_output
-                        output_result = GenerationBatchResult(
-                            logits_output=None,
-                            pp_hidden_states_proxy_tensors=None,
-                            next_token_ids=token_output,
-                            extend_input_len_per_req=None,
-                            extend_logprob_start_len_per_req=None,
-                            bid=bids[next_recv_token_mb_id],
-                            can_run_cuda_graph=result.can_run_cuda_graph,
-                        )
-                        self.process_batch_result(mbs[next_recv_token_mb_id], output_result)
-                        last_mbs[next_recv_token_mb_id] = mbs[next_recv_token_mb_id] 
+                        logger.info(f"----- mb_id {mb_id} handle_id {next_recv_token_mb_id} start recv {output_token_size}")
+                        cb, token_output = self.pp_output_group.irecv([output_token_size], torch.int64)
+                        token_rs_results[next_recv_token_mb_id] = TokenOutputAsyncResult(
+                           token_output=token_output,
+                           cb_work=cb,
+                           status=TokenOutputAsyncStatus.RECVING,
+                        )   
+                        # token_output = torch.tensor([578] * output_token_size, dtype=torch.int64, device=self.device)
+                        # mbs[next_recv_token_mb_id].output_ids = token_output
+                        # output_result = GenerationBatchResult(
+                        #     logits_output=None,
+                        #     pp_hidden_states_proxy_tensors=None,
+                        #     next_token_ids=token_output,
+                        #     extend_input_len_per_req=None,
+                        #     extend_logprob_start_len_per_req=None,
+                        #     bid=bids[next_recv_token_mb_id],
+                        #     can_run_cuda_graph=result.can_run_cuda_graph,
+                        # )
+                        # self.process_batch_result(mbs[next_recv_token_mb_id], output_result)
+                        # last_mbs[next_recv_token_mb_id] = mbs[next_recv_token_mb_id] 
 
                         nvtx.range_pop() # irecv token output
 
@@ -1040,7 +1039,7 @@ class Scheduler(
                                 if token_rs_results[check_cb_start_id].status == TokenOutputAsyncStatus.RECVED:
                                     
                                     nvtx.range_push(f"isend start")
-                                    #logger.info(f"----- PP{self.pp_group.rank} mb_id {check_cb_start_id} start send")
+                                    logger.info(f"----- mb_id {mb_id} handle_id {check_cb_start_id} start send")
                                     cb = self.pp_output_group.isend(token_rs_results[check_cb_start_id].token_output)
                                     token_rs_results[check_cb_start_id].status == TokenOutputAsyncStatus.SENDING
                                     token_rs_results[check_cb_start_id].cb_work = cb
@@ -1060,7 +1059,7 @@ class Scheduler(
                                         finish_recv = True
                                 nvtx.range_pop() # irecv wait
                                 if finish_recv:
-                                    #logger.info(f"----- PP{self.pp_group.rank} mb_id {check_cb_start_id} recved")
+                                    logger.info(f"----- mb_id {mb_id} handle_id {check_cb_start_id} recved")
                                     mbs[check_cb_start_id].output_ids = token_rs_results[check_cb_start_id].token_output
                                     output_result = GenerationBatchResult(
                                         logits_output=None,
@@ -1079,19 +1078,18 @@ class Scheduler(
                                 if not self.pp_group.is_last_rank:
                                     if i != self.micro_step_size - self.pp_size + 1:
                                         nvtx.range_push(f"isend start")
-                                        #logger.info(f"----- PP{self.pp_group.rank} mb_id {check_cb_start_id} start send")
+                                        logger.info(f"----- mb_id {mb_id} handle_id {check_cb_start_id} start send")
                                         token_rs_results[check_cb_start_id].cb_work = \
                                             self.pp_output_group.isend(token_rs_results[check_cb_start_id].token_output)
                                         token_rs_results[check_cb_start_id].status = TokenOutputAsyncStatus.SENDING
                                         nvtx.range_pop() # isend start
-
                                 else:
                                     token_rs_results[check_cb_start_id] = None
 
                             elif token_rs_results[check_cb_start_id].status == TokenOutputAsyncStatus.RECVED:
                                     if i != self.micro_step_size - self.pp_size + 1:
                                         nvtx.range_push(f"isend start")
-                                        #logger.info(f"----- PP{self.pp_group.rank} mb_id {check_cb_start_id} start send")
+                                        logger.info(f"----- mb_id {mb_id} handle_id {check_cb_start_id} start send")
                                         token_rs_results[check_cb_start_id].cb_work = \
                                             self.pp_output_group.isend(token_rs_results[check_cb_start_id].token_output)
                                         token_rs_results[check_cb_start_id].status = TokenOutputAsyncStatus.SENDING
@@ -1101,7 +1099,7 @@ class Scheduler(
                                 nvtx.range_push(f"isend wait")
                                 if token_rs_results[check_cb_start_id].cb_work.is_completed():
                                     token_rs_results[check_cb_start_id] = None
-                                    #logger.info(f"----- PP{self.pp_group.rank} mb_id {check_cb_start_id} send finish")
+                                    logger.info(f"----- mb_id {mb_id} handle_id {check_cb_start_id} send finish")
                                 nvtx.range_pop() # isend wait
                         
                     check_cb_start_id = (check_cb_start_id + i + 1) % self.micro_step_size
