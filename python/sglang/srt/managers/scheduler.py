@@ -1031,14 +1031,15 @@ class Scheduler(
                 nvtx.range_push(f"step output async")
 
                 for i in range(self.micro_step_size - self.pp_size + 2):
+
                     if token_rs_results[check_cb_start_id] is not None:
+                        logger.info(f"----- check loop i {i} mb_id {mb_id} handle_id {check_cb_start_id} status {token_rs_results[check_cb_start_id].status}")
                         if i == 0:
                             if not self.pp_group.is_last_rank:
                                 assert token_rs_results[check_cb_start_id].status == TokenOutputAsyncStatus.RECVED or \
                                     token_rs_results[check_cb_start_id].status == TokenOutputAsyncStatus.SENDING
                                 
                                 if token_rs_results[check_cb_start_id].status == TokenOutputAsyncStatus.RECVED:
-                                    
                                     nvtx.range_push(f"isend start")
                                     logger.info(f"----- mb_id {mb_id} handle_id {check_cb_start_id} start send")
                                     cb = self.pp_output_group.isend(token_rs_results[check_cb_start_id].token_output)
@@ -1050,7 +1051,7 @@ class Scheduler(
                             if token_rs_results[check_cb_start_id].status == TokenOutputAsyncStatus.RECVING:
                                 nvtx.range_push(f"irecv wait")
                                 finish_recv = False
-                                if i == 1 or (not async_comm_init_status and i == self.micro_step_size - self.pp_size + 1):
+                                if i == 1 or ((not async_comm_init_status) and i == self.micro_step_size - self.pp_size + 1):
                                     token_rs_results[check_cb_start_id].cb_work.wait()
                                     token_rs_results[check_cb_start_id].status = TokenOutputAsyncStatus.RECVED
                                     finish_recv = True
